@@ -137,8 +137,12 @@ static _Bool tracedir(struct dir_context *dir_context,
             container_of(dir_context, struct http_request, dir_context);
         char buf[SEND_BUFFER_SIZE] = {0};
 
-        snprintf(buf, SEND_BUFFER_SIZE,
-                 "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", name, name);
+        int len =
+            snprintf(buf, SEND_BUFFER_SIZE,
+                     "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", name, name);
+        if (len >= SEND_BUFFER_SIZE)  // avoid buffer not enough
+            pr_err("Buffer truncated, required size: %d\n", len);
+
         http_server_send(request->socket, buf, strlen(buf));
     }
     return true;
