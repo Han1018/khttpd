@@ -232,6 +232,7 @@ static bool handle_directory(struct http_request *request)
     }
 
     filp_close(fp, NULL);
+    kernel_sock_shutdown(request->socket, SHUT_RDWR);
     return true;
 }
 
