@@ -10,6 +10,7 @@
 
 #define RECV_BUFFER_SIZE 4096
 #define SEND_BUFFER_SIZE 256
+#define BUFFER_SIZE 256
 
 #define MODULE_NAME "khttpd"
 
@@ -124,6 +125,31 @@ static int http_parser_callback_message_complete(http_parser *parser)
     request->complete = 1;
     return 0;
 }
+
+static void catstr(char *res, char *first, char *second)
+{
+    int first_size = strlen(first);
+    int second_size = strlen(second);
+    memset(res, 0, BUFFER_SIZE);
+    memcpy(res, first, first_size);
+    memcpy(res + first_size, second, second_size);
+}
+
+static void send_http_header(struct socket *socket,
+                             int status,
+                             const char *status_msg,
+                             char *type,
+                             int length,
+                             char *conn_msg)
+{
+    char buf[SEND_BUFFER_SIZE] = {0};
+    snprintf(buf, SEND_BUFFER_SIZE,
+             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: "
+             "%d\r\nConnection: %s\r\n\r\n",
+             status, status_msg, type, length, conn_msg);
+    http_server_send(socket, buf, strlen(buf));
+}
+
 // callback for 'iterate_dir', trace entry.
 static _Bool tracedir(struct dir_context *dir_context,
                       const char *name,
@@ -151,40 +177,60 @@ static _Bool tracedir(struct dir_context *dir_context,
 static bool handle_directory(struct http_request *request)
 {
     struct file *fp;
-    char buf[SEND_BUFFER_SIZE] = {0};
+    char pwd[BUFFER_SIZE] = {0};
 
     request->dir_context.actor = tracedir;
     if (request->method != HTTP_GET) {
-        snprintf(buf, SEND_BUFFER_SIZE,
-                 "HTTP/1.1 501 Not Implemented\r\n%s%s%s%s",
-                 "Content-Type: text/plain\r\n", "Content-Length: 19\r\n",
-                 "Connection: Close\r\n", "501 Not Implemented\r\n");
-        http_server_send(request->socket, buf, strlen(buf));
+        send_http_header(request->socket, HTTP_STATUS_NOT_IMPLEMENTED,
+                         http_status_str(HTTP_STATUS_NOT_IMPLEMENTED),
+                         "text/plain", 19, "Close");
         return false;
     }
 
-    snprintf(buf, SEND_BUFFER_SIZE, "HTTP/1.1 200 OK\r\n%s%s%s",
-             "Connection: Keep-Alive\r\n", "Content-Type: text/html\r\n",
-             "Keep-Alive: timeout=5, max=1000\r\n\r\n");
-    http_server_send(request->socket, buf, strlen(buf));
+    // 串連 request_url 與 指定路徑
+    catstr(pwd, "/home/deepcat/Documents/Course/linux2024/khttpd",
+           request->request_url);
 
-
-    snprintf(buf, SEND_BUFFER_SIZE, "%s%s%s%s", "<html><head><style>\r\n",
-             "body{font-family: monospace; font-size: 15px;}\r\n",
-             "td {padding: 1.5px 6px;}\r\n",
-             "</style></head><body><table>\r\n");
-    http_server_send(request->socket, buf, strlen(buf));
-
-    fp = filp_open("/home/deepcat/Documents/Course/linux2024/khttpd",
-                   O_RDONLY | O_DIRECTORY, 0);
+    // 開啟檔案
+    fp = filp_open(pwd, O_RDONLY, 0);
     if (IS_ERR(fp)) {
         pr_info("Open file failed");
         return false;
     }
 
-    iterate_dir(fp, &request->dir_context);
-    snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
-    http_server_send(request->socket, buf, strlen(buf));
+    // 判斷為目錄
+    if (S_ISDIR(fp->f_inode->i_mode)) {
+        char buf[SEND_BUFFER_SIZE] = {0};
+        snprintf(buf, SEND_BUFFER_SIZE, "HTTP/1.1 200 OK\r\n%s%s%s",
+                 "Connection: Keep-Alive\r\n", "Content-Type: text/html\r\n",
+                 "Keep-Alive: timeout=5, max=1000\r\n\r\n");
+        http_server_send(request->socket, buf, strlen(buf));
+
+        snprintf(buf, SEND_BUFFER_SIZE, "%s%s%s%s", "<html><head><style>\r\n",
+                 "body{font-family: monospace; font-size: 15px;}\r\n",
+                 "td {padding: 1.5px 6px;}\r\n",
+                 "</style></head><body><table>\r\n");
+        http_server_send(request->socket, buf, strlen(buf));
+
+        iterate_dir(fp, &request->dir_context);
+
+        snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
+        http_server_send(request->socket, buf, strlen(buf));
+    }
+    // 判斷為檔案
+    else if (S_ISREG(fp->f_inode->i_mode)) {
+        char *read_data_buf = kmalloc(fp->f_inode->i_size, GFP_KERNEL);
+
+        // 讀檔案內容
+        int ret = kernel_read(fp, read_data_buf, fp->f_inode->i_size, 0);
+
+        send_http_header(request->socket, HTTP_STATUS_OK,
+                         http_status_str(HTTP_STATUS_OK), "text/plain", ret,
+                         "Close");
+        http_server_send(request->socket, read_data_buf, ret);
+        kfree(read_data_buf);
+    }
+
     filp_close(fp, NULL);
     return true;
 }
