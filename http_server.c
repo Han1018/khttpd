@@ -14,6 +14,10 @@
 
 #define MODULE_NAME "khttpd"
 
+#define SEND_HTTP_MSG(socket, buf, format, ...)           \
+    snprintf(buf, SEND_BUFFER_SIZE, format, __VA_ARGS__); \
+    http_server_send(socket, buf, strlen(buf));
+
 struct http_request {
     struct socket *socket;
     enum http_method method;
@@ -201,21 +205,24 @@ static bool handle_directory(struct http_request *request)
     // 判斷為目錄
     if (S_ISDIR(fp->f_inode->i_mode)) {
         char buf[SEND_BUFFER_SIZE] = {0};
-        snprintf(buf, SEND_BUFFER_SIZE, "HTTP/1.1 200 OK\r\n%s%s%s",
-                 "Connection: Keep-Alive\r\n", "Content-Type: text/html\r\n",
-                 "Keep-Alive: timeout=5, max=1000\r\n\r\n");
-        http_server_send(request->socket, buf, strlen(buf));
 
-        snprintf(buf, SEND_BUFFER_SIZE, "%s%s%s%s", "<html><head><style>\r\n",
-                 "body{font-family: monospace; font-size: 15px;}\r\n",
-                 "td {padding: 1.5px 6px;}\r\n",
-                 "</style></head><body><table>\r\n");
-        http_server_send(request->socket, buf, strlen(buf));
+        // Send HTTP header
+        SEND_HTTP_MSG(request->socket, buf, "HTTP/1.1 200 OK\r\n%s%s%s",
+                      "Connection: Keep-Alive\r\n",
+                      "Content-Type: text/html\r\n",
+                      "Keep-Alive: timeout=5, max=1000\r\n\r\n");
 
+        // Send HTML header
+        SEND_HTTP_MSG(
+            request->socket, buf, "%s%s%s%s", "<html><head><style>\r\n",
+            "body{font-family: monospace; font-size: 15px;}\r\n",
+            "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
+
+        // scan directory and send to client
         iterate_dir(fp, &request->dir_context);
 
-        snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
-        http_server_send(request->socket, buf, strlen(buf));
+        // Send HTML footer
+        SEND_HTTP_MSG(request->socket, buf, "%s", "</table></body></html>\r\n");
     }
     // 判斷為檔案
     else if (S_ISREG(fp->f_inode->i_mode)) {
@@ -227,6 +234,8 @@ static bool handle_directory(struct http_request *request)
         send_http_header(request->socket, HTTP_STATUS_OK,
                          http_status_str(HTTP_STATUS_OK), "text/plain", ret,
                          "Close");
+
+        // Send file content
         http_server_send(request->socket, read_data_buf, ret);
         kfree(read_data_buf);
     }
