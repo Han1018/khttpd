@@ -139,21 +139,6 @@ static void catstr(char *res, char *first, char *second)
     memcpy(res + first_size, second, second_size);
 }
 
-static void send_http_header(struct socket *socket,
-                             int status,
-                             const char *status_msg,
-                             char *type,
-                             int length,
-                             char *conn_msg)
-{
-    char buf[SEND_BUFFER_SIZE] = {0};
-    snprintf(buf, SEND_BUFFER_SIZE,
-             "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: "
-             "%d\r\nConnection: %s\r\n\r\n",
-             status, status_msg, type, length, conn_msg);
-    http_server_send(socket, buf, strlen(buf));
-}
-
 // callback for 'iterate_dir', trace entry.
 static _Bool tracedir(struct dir_context *dir_context,
                       const char *name,
@@ -182,12 +167,14 @@ static bool handle_directory(struct http_request *request)
 {
     struct file *fp;
     char pwd[BUFFER_SIZE] = {0};
+    char buf[SEND_BUFFER_SIZE] = {0};
 
     request->dir_context.actor = tracedir;
     if (request->method != HTTP_GET) {
-        send_http_header(request->socket, HTTP_STATUS_NOT_IMPLEMENTED,
-                         http_status_str(HTTP_STATUS_NOT_IMPLEMENTED),
-                         "text/plain", 19, "Close");
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%s",
+                      "HTTP/1.1 501 Not Implemented\r\n",
+                      "Content-Type: text/plain\r\n", "Content-Length: 19\r\n",
+                      "Connection: Close\r\n\r\n", "501 Not Implemented");
         return false;
     }
 
@@ -198,14 +185,12 @@ static bool handle_directory(struct http_request *request)
     // 開啟檔案
     fp = filp_open(pwd, O_RDONLY, 0);
     if (IS_ERR(fp)) {
-        pr_info("Open file failed");
+        pr_err("Open file failed, fp : %ld\n", PTR_ERR(fp));
         return false;
     }
 
     // 判斷為目錄
     if (S_ISDIR(fp->f_inode->i_mode)) {
-        char buf[SEND_BUFFER_SIZE] = {0};
-
         // Send HTTP header
         SEND_HTTP_MSG(request->socket, buf, "HTTP/1.1 200 OK\r\n%s%s%s",
                       "Connection: Keep-Alive\r\n",
@@ -231,9 +216,10 @@ static bool handle_directory(struct http_request *request)
         // 讀檔案內容
         int ret = kernel_read(fp, read_data_buf, fp->f_inode->i_size, 0);
 
-        send_http_header(request->socket, HTTP_STATUS_OK,
-                         http_status_str(HTTP_STATUS_OK), "text/plain", ret,
-                         "Close");
+        // Send HTTP header
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%d%s", "HTTP/1.1 200 OK\r\n",
+                      "Content-Type: text/plain\r\n", "Content-Length: ", ret,
+                      "\r\nConnection: Close\r\n\r\n");
 
         // Send file content
         http_server_send(request->socket, read_data_buf, ret);
