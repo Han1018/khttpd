@@ -5,9 +5,9 @@
 #include <linux/sched/signal.h>
 #include <linux/tcp.h>
 
-#include "http_parser.h"
 #include "http_server.h"
 #include "mime_type.h"
+#include "timer.h"
 
 #define RECV_BUFFER_SIZE 4096
 #define SEND_BUFFER_SIZE 256
@@ -18,16 +18,6 @@
 #define SEND_HTTP_MSG(socket, buf, format, ...)           \
     snprintf(buf, SEND_BUFFER_SIZE, format, __VA_ARGS__); \
     http_server_send(socket, buf, strlen(buf));
-
-struct http_request {
-    struct socket *socket;
-    enum http_method method;
-    char request_url[128];
-    int complete;
-    struct dir_context dir_context;
-    struct list_head node;
-    struct work_struct khttpd_work;
-};
 
 struct khttpd_service daemon = {.is_stopped = false};
 struct workqueue_struct *khttpd_wq;  // define khttpd workqueue
@@ -231,7 +221,6 @@ static bool handle_directory(struct http_request *request)
     }
 
     filp_close(fp, NULL);
-    kernel_sock_shutdown(request->socket, SHUT_RDWR);
     return true;
 }
 
@@ -265,7 +254,10 @@ static void http_server_worker(struct work_struct *work)
     http_parser_init(&parser, HTTP_REQUEST);
     parser.data = &http_work->socket;
 
-    while (!kthread_should_stop()) {
+    // add a timer to worker
+    http_add_timer(http_work, TIMEOUT_DEFAULT, kernel_sock_shutdown);
+
+    while (!daemon.is_stopped) {
         int ret =
             http_server_recv(http_work->socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
@@ -330,13 +322,20 @@ int http_server_daemon(void *arg)
     allow_signal(SIGKILL);
     allow_signal(SIGTERM);
 
+    // initial timer to manage connect
+    http_timer_init();
+
     while (!kthread_should_stop()) {
-        int err = kernel_accept(param->listen_socket, &socket, 0);
+        int err = kernel_accept(param->listen_socket, &socket, SOCK_NONBLOCK);
+
+        // clean up expired timer
+        handle_expired_timers();
+
         if (err < 0) {
             // 檢查此 thread 是否有 signal 發生
             if (signal_pending(current))
                 break;
-            pr_err("kernel_accept() error: %d\n", err);
+            // pr_err("kernel_accept() error: %d\n", err);
             continue;
         }
 
@@ -344,6 +343,8 @@ int http_server_daemon(void *arg)
         work = create_work(socket);
         if (!work) {
             pr_err("can't create work\n");
+            kernel_sock_shutdown(socket, SHUT_RDWR);
+            sock_release(socket);
             continue;
         }
 

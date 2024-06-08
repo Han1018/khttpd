@@ -7,6 +7,7 @@
 #include <net/sock.h>
 
 #include "http_server.h"
+#include "timer.h"
 
 #define DEFAULT_PORT 8081
 #define DEFAULT_BACKLOG 100
@@ -174,6 +175,7 @@ static void __exit khttpd_exit(void)
     send_sig(SIGTERM, http_server, 1);
     kthread_stop(http_server);
     close_listen_socket(listen_socket);
+    http_free_timer();
     pr_info("module unloaded\n");
 }
 
