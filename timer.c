@@ -82,9 +82,10 @@ static inline void prio_queue_swim(prio_queue_t *ptr, size_t k)
 
 static size_t prio_queue_sink(prio_queue_t *ptr, size_t k)
 {
-    while ((k << 1) <= ptr->nalloc) {
+    while ((k << 1) < ptr->nalloc) {  // 修改條件
         size_t j = k << 1;
-        if (j < ptr->nalloc && ptr->comp(ptr->priv[j + 1], ptr->priv[j]))
+        if (j + 1 < ptr->nalloc &&
+            ptr->comp(ptr->priv[j + 1], ptr->priv[j]))  // 修改條件
             j++;
         if (!ptr->comp(ptr->priv[j], ptr->priv[k]))
             break;
@@ -147,8 +148,6 @@ void http_timer_init(void)
 
 void handle_expired_timers(void)
 {
-    int handled_timers = 0;
-    const int max_timers_to_handle = 100;  // 設定一個合理的數值來讓出 CPU
     while (!prio_queue_is_empty(&timer)) {
         timer_node_t *node;
 

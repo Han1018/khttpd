@@ -22,7 +22,7 @@
 struct khttpd_service daemon = {.is_stopped = false};
 struct workqueue_struct *khttpd_wq;  // define khttpd workqueue
 
-static bool handle_directory(struct http_request *request);
+static bool handle_directory(struct http_request *request, int keep_alive);
 
 static int http_server_recv(struct socket *sock, char *buf, size_t size)
 {
@@ -61,7 +61,7 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
 static int http_server_response(struct http_request *request, int keep_alive)
 {
     int ret = 0;
-    ret = handle_directory(request);
+    ret = handle_directory(request, keep_alive);
     if (ret == 0) {
         pr_err("handle_directory failed\n");
         return -1;
@@ -156,18 +156,20 @@ static _Bool tracedir(struct dir_context *dir_context,
     return true;
 }
 
-static bool handle_directory(struct http_request *request)
+static bool handle_directory(struct http_request *request, int keep_alive)
 {
     struct file *fp;
     char pwd[BUFFER_SIZE] = {0};
     char buf[SEND_BUFFER_SIZE] = {0};
+    char *connection = keep_alive ? "Keep-Alive" : "Close";
 
     request->dir_context.actor = tracedir;
     if (request->method != HTTP_GET) {
-        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%s",
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%s%s",
                       "HTTP/1.1 501 Not Implemented\r\n",
                       "Content-Type: text/plain\r\n", "Content-Length: 19\r\n",
-                      "Connection: Close\r\n\r\n", "501 Not Implemented");
+                      "Connection: ", connection,
+                      "\r\n\r\n501 Not Implemented");
         return false;
     }
 
@@ -185,9 +187,9 @@ static bool handle_directory(struct http_request *request)
     // 判斷為目錄
     if (S_ISDIR(fp->f_inode->i_mode)) {
         // Send HTTP header
-        SEND_HTTP_MSG(request->socket, buf, "HTTP/1.1 200 OK\r\n%s%s%s",
-                      "Connection: Keep-Alive\r\n",
-                      "Content-Type: text/html\r\n",
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%s", "HTTP/1.1 200 OK\r\n",
+                      "Connection: ", connection,
+                      "\r\nContent-Type: text/html\r\n",
                       "Keep-Alive: timeout=5, max=1000\r\n\r\n");
 
         // Send HTML header
@@ -210,10 +212,11 @@ static bool handle_directory(struct http_request *request)
         int ret = kernel_read(fp, read_data_buf, fp->f_inode->i_size, 0);
 
         // Send HTTP header
-        SEND_HTTP_MSG(
-            request->socket, buf, "%s%s%s%s%d%s", "HTTP/1.1 200 OK\r\n",
-            "Content-Type: ", get_mime_str(request->request_url),
-            "\r\nContent-Length: ", ret, "\r\nConnection: Close\r\n\r\n");
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%d%s%s%s",
+                      "HTTP/1.1 200 OK\r\n",
+                      "Content-Type: ", get_mime_str(request->request_url),
+                      "\r\nContent-Length: ", ret,
+                      "\r\nConnection: ", connection, "\r\n\r\n");
 
         // Send file content
         http_server_send(request->socket, read_data_buf, ret);
