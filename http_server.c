@@ -274,7 +274,6 @@ static void http_server_worker(struct work_struct *work)
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
     kernel_sock_shutdown(http_work->socket, SHUT_RDWR);
-    sock_release(http_work->socket);
     kfree(buf);
     // return 0;
 }
