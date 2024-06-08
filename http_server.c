@@ -73,7 +73,7 @@ static int http_parser_callback_message_begin(http_parser *parser)
 {
     struct http_request *request = parser->data;
     struct socket *socket = request->socket;
-    memset(request, 0x00, sizeof(struct http_request));
+    memset(request->request_url, 0, 128);
     request->socket = socket;
     return 0;
 }
@@ -268,10 +268,14 @@ static void http_server_worker(struct work_struct *work)
                 pr_err("recv error: %d\n", ret);
             break;
         }
-        http_parser_execute(&parser, &setting, buf, ret);
+        if (!http_parser_execute(&parser, &setting, buf, ret))
+            continue;
+
         if (http_work->complete && !http_should_keep_alive(&parser))
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
+
+        http_timer_update(http_work->timer_node, TIMEOUT_DEFAULT);
     }
     kernel_sock_shutdown(http_work->socket, SHUT_RDWR);
     kfree(buf);
