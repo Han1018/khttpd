@@ -25,6 +25,8 @@ struct http_request {
     char request_url[128];
     int complete;
     struct dir_context dir_context;
+    struct list_head node;
+    struct work_struct khttpd_work;
 };
 
 struct khttpd_service daemon = {.is_stopped = false};
@@ -236,6 +238,10 @@ static bool handle_directory(struct http_request *request)
 // static int http_server_worker(void *arg)
 static void http_server_worker(struct work_struct *work)
 {
+    // get http_request from work
+    struct http_request *http_work =
+        container_of(work, struct http_request, khttpd_work);
+
     char *buf;
     struct http_parser parser;
     struct http_parser_settings setting = {
@@ -246,9 +252,6 @@ static void http_server_worker(struct work_struct *work)
         .on_headers_complete = http_parser_callback_headers_complete,
         .on_body = http_parser_callback_body,
         .on_message_complete = http_parser_callback_message_complete};
-    struct http_request request;
-    struct khttpd *khttpd_work = container_of(work, struct khttpd, khttpd_work);
-    struct socket *socket = khttpd_work->sock;
 
     allow_signal(SIGKILL);
     allow_signal(SIGTERM);
@@ -259,51 +262,52 @@ static void http_server_worker(struct work_struct *work)
         return;
     }
 
-    request.socket = socket;
     http_parser_init(&parser, HTTP_REQUEST);
-    parser.data = &request;
+    parser.data = &http_work->socket;
+
     while (!kthread_should_stop()) {
-        int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
+        int ret =
+            http_server_recv(http_work->socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
             if (ret)
                 pr_err("recv error: %d\n", ret);
             break;
         }
         http_parser_execute(&parser, &setting, buf, ret);
-        if (request.complete && !http_should_keep_alive(&parser))
+        if (http_work->complete && !http_should_keep_alive(&parser))
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
-    kernel_sock_shutdown(socket, SHUT_RDWR);
-    sock_release(socket);
+    kernel_sock_shutdown(http_work->socket, SHUT_RDWR);
+    sock_release(http_work->socket);
     kfree(buf);
     // return 0;
 }
 
 static struct work_struct *create_work(struct socket *sk)
 {
-    struct khttpd *work;
+    struct http_request *work;
 
     // GFP_KERNEL: 正常配置記憶體
-    if (!(work = kmalloc(sizeof(struct khttpd), GFP_KERNEL)))
+    if (!(work = kmalloc(sizeof(struct http_request), GFP_KERNEL)))
         return NULL;
 
-    work->sock = sk;
+    work->socket = sk;
 
     // 建立 work - http_server_worker function
     INIT_WORK(&work->khttpd_work, http_server_worker);
-    list_add(&work->list, &daemon.worker);  // Add work to worker list
+    list_add(&work->node, &daemon.worker);  // Add work to worker list
 
     return &work->khttpd_work;
 }
 
 static void free_work(void)
 {
-    struct khttpd *tmp, *tgt;
-    list_for_each_entry_safe (tgt, tmp, &daemon.worker, list) {
-        kernel_sock_shutdown(tgt->sock, SHUT_RDWR);
+    struct http_request *tmp, *tgt;
+    list_for_each_entry_safe (tgt, tmp, &daemon.worker, node) {
+        kernel_sock_shutdown(tgt->socket, SHUT_RDWR);
         flush_work(&tgt->khttpd_work);
-        sock_release(tgt->sock);
+        sock_release(tgt->socket);
         kfree(tgt);
     }
 }

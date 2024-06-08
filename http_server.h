@@ -13,12 +13,6 @@ struct khttpd_service {
     struct list_head worker;
 };
 
-struct khttpd {
-    struct socket *sock;
-    struct list_head list;
-    struct work_struct khttpd_work;
-};
-
 extern struct workqueue_struct *khttpd_wq;
 extern int http_server_daemon(void *arg);
 
