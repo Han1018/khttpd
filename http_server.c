@@ -157,13 +157,9 @@ static _Bool tracedir(struct dir_context *dir_context,
             strncpy(href_link, name, strlen(name));
         }
 
-        int len = snprintf(buf, SEND_BUFFER_SIZE,
-                           "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
-                           href_link, name);
-        if (len >= SEND_BUFFER_SIZE)  // avoid buffer not enough
-            pr_err("Buffer truncated, required size: %d\n", len);
-
-        http_server_send(request->socket, buf, strlen(buf));
+        SEND_HTTP_MSG(request->socket, buf,
+                      "%lx\r\n<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
+                      34 + strlen(href_link) + strlen(name), href_link, name);
     }
     return true;
 }
@@ -198,14 +194,14 @@ static bool handle_directory(struct http_request *request, int keep_alive)
     // 判斷為目錄
     if (S_ISDIR(fp->f_inode->i_mode)) {
         // Send HTTP header
-        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%s", "HTTP/1.1 200 OK\r\n",
-                      "Connection: ", connection,
-                      "\r\nContent-Type: text/html\r\n",
-                      "Keep-Alive: timeout=5, max=1000\r\n\r\n");
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s", "HTTP/1.1 200 OK\r\n",
+                      "Connection: Keep-Alive\r\n",
+                      "Content-Type: text/html\r\n",
+                      "Transfer-Encoding: chunked\r\n\r\n");
 
         // Send HTML header
         SEND_HTTP_MSG(
-            request->socket, buf, "%s%s%s%s", "<html><head><style>\r\n",
+            request->socket, buf, "7B\r\n%s%s%s%s", "<html><head><style>\r\n",
             "body{font-family: monospace; font-size: 15px;}\r\n",
             "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
 
@@ -213,7 +209,9 @@ static bool handle_directory(struct http_request *request, int keep_alive)
         iterate_dir(fp, &request->dir_context);
 
         // Send HTML footer
-        SEND_HTTP_MSG(request->socket, buf, "%s", "</table></body></html>\r\n");
+        SEND_HTTP_MSG(request->socket, buf, "%s",
+                      "16\r\n</table></body></html>\r\n");
+        SEND_HTTP_MSG(request->socket, buf, "%s", "0\r\n\r\n\r\n");
     }
     // 判斷為檔案
     else if (S_ISREG(fp->f_inode->i_mode)) {
