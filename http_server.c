@@ -205,6 +205,15 @@ static bool handle_directory(struct http_request *request, int keep_alive)
             "body{font-family: monospace; font-size: 15px;}\r\n",
             "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
 
+        // Add .. link
+        if (strcmp(request->request_url, "")) {
+            SEND_HTTP_MSG(
+                request->socket, buf,
+                "%lx\r\n<tr><td><a href=\"%s%s\">..</a></td></tr>\r\n",
+                36 + strlen(request->request_url) + 4, request->request_url,
+                "/../");
+        }
+
         // scan directory and send to client
         iterate_dir(fp, &request->dir_context);
 
