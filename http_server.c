@@ -145,9 +145,21 @@ static _Bool tracedir(struct dir_context *dir_context,
             container_of(dir_context, struct http_request, dir_context);
         char buf[SEND_BUFFER_SIZE] = {0};
 
-        int len =
-            snprintf(buf, SEND_BUFFER_SIZE,
-                     "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", name, name);
+        // create href link
+        char *href_link = kmalloc(
+            strlen(request->request_url) + strlen(name) + 2, GFP_KERNEL);
+        if (strcmp(request->request_url, "/") != 0) {
+            strncpy(href_link, request->request_url,
+                    strlen(request->request_url));
+            strcat(href_link, "/");
+            strcat(href_link, name);
+        } else {
+            strncpy(href_link, name, strlen(name));
+        }
+
+        int len = snprintf(buf, SEND_BUFFER_SIZE,
+                           "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
+                           href_link, name);
         if (len >= SEND_BUFFER_SIZE)  // avoid buffer not enough
             pr_err("Buffer truncated, required size: %d\n", len);
 
