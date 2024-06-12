@@ -7,11 +7,13 @@
 
 struct http_server_param {
     struct socket *listen_socket;
+    char *root_path;
 };
 
 struct khttpd_service {
     bool is_stopped;
     struct list_head worker;
+    char *root_path;
 };
 
 struct http_request {

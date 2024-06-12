@@ -186,8 +186,7 @@ static bool handle_directory(struct http_request *request, int keep_alive)
     }
 
     // 串連 request_url 與 指定路徑
-    catstr(pwd, "/home/deepcat/Documents/Course/linux2024/khttpd",
-           request->request_url);
+    catstr(pwd, daemon.root_path, request->request_url);
 
     // 開啟檔案
     fp = filp_open(pwd, O_RDONLY, 0);
@@ -327,6 +326,9 @@ int http_server_daemon(void *arg)
     struct socket *socket;
     struct http_server_param *param = (struct http_server_param *) arg;
     struct work_struct *work;
+
+    // Init root path
+    daemon.root_path = param->root_path;
 
     // Initialize CMWQ
     khttpd_wq = alloc_workqueue(MODULE_NAME, WQ_UNBOUND, 0);

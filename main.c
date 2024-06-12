@@ -11,11 +11,14 @@
 
 #define DEFAULT_PORT 8081
 #define DEFAULT_BACKLOG 100
+#define PATH_SIZE 100
 
 static ushort port = DEFAULT_PORT;
 module_param(port, ushort, S_IRUGO);
 static ushort backlog = DEFAULT_BACKLOG;
 module_param(backlog, ushort, S_IRUGO);
+static char ROOT[PATH_SIZE] = {0};
+module_param_string(root, ROOT, PATH_SIZE, 0);
 
 static struct socket *listen_socket;
 static struct http_server_param param;
@@ -161,6 +164,8 @@ static int __init khttpd_init(void)
         return err;
     }
     param.listen_socket = listen_socket;
+    param.root_path = ROOT;
+
     http_server = kthread_run(http_server_daemon, &param, KBUILD_MODNAME);
     if (IS_ERR(http_server)) {
         pr_err("can't start http server daemon\n");
