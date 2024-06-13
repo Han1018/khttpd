@@ -206,7 +206,7 @@ static bool handle_directory(struct http_request *request, int keep_alive)
             "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
 
         // Add .. link
-        if (strcmp(request->request_url, "")) {
+        if (strcmp(request->request_url, "/")) {
             SEND_HTTP_MSG(
                 request->socket, buf,
                 "%lx\r\n<tr><td><a href=\"%s%s\">..</a></td></tr>\r\n",
