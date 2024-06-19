@@ -3,7 +3,7 @@
 
 #include "http_server.h"
 
-#define TIMEOUT_DEFAULT 8000 /* ms */
+#define TIMEOUT_DEFAULT 20000 /* ms */
 
 typedef int (*timer_callback)(struct socket *, enum sock_shutdown_cmd);
 typedef struct {

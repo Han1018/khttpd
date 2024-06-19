@@ -5,6 +5,8 @@
 #include <net/sock.h>
 #include "http_parser.h"
 
+#define SEND_BUFFER_SIZE 256
+
 struct http_server_param {
     struct socket *listen_socket;
     char *root_path;
@@ -16,6 +18,11 @@ struct khttpd_service {
     char *root_path;
 };
 
+struct cache_content {
+    struct list_head cache;
+    char buf[SEND_BUFFER_SIZE];
+};
+
 struct http_request {
     struct socket *socket;
     enum http_method method;
@@ -25,6 +32,7 @@ struct http_request {
     struct list_head node;
     struct work_struct khttpd_work;
     void *timer_node;
+    struct list_head *cache_list;
 };
 
 extern struct workqueue_struct *khttpd_wq;

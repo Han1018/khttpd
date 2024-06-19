@@ -5,6 +5,7 @@
 #include <linux/sched/signal.h>
 #include <linux/tcp.h>
 
+#include "hash_content.h"
 #include "http_server.h"
 #include "mime_type.h"
 #include "timer.h"
@@ -12,6 +13,7 @@
 #define RECV_BUFFER_SIZE 4096
 #define SEND_BUFFER_SIZE 256
 #define BUFFER_SIZE 256
+#define BUCKET_SIZE 10
 
 #define MODULE_NAME "khttpd"
 
@@ -132,6 +134,12 @@ static void catstr(char *res, char *first, char *second)
     memcpy(res + first_size, second, second_size);
 }
 
+static void add_to_list_tail(struct list_head *new_node, struct list_head *head)
+{
+    INIT_LIST_HEAD(new_node);
+    list_add_tail(new_node, head);
+}
+
 // callback for 'iterate_dir', trace entry.
 static _Bool tracedir(struct dir_context *dir_context,
                       const char *name,
@@ -143,11 +151,10 @@ static _Bool tracedir(struct dir_context *dir_context,
     if (strcmp(name, ".") && strcmp(name, "..")) {
         struct http_request *request =
             container_of(dir_context, struct http_request, dir_context);
-        char buf[SEND_BUFFER_SIZE] = {0};
-
         // create href link
         char *href_link = kmalloc(
             strlen(request->request_url) + strlen(name) + 2, GFP_KERNEL);
+
         if (strcmp(request->request_url, "/") != 0) {
             strncpy(href_link, request->request_url,
                     strlen(request->request_url));
@@ -157,9 +164,20 @@ static _Bool tracedir(struct dir_context *dir_context,
             strncpy(href_link, name, strlen(name));
         }
 
-        SEND_HTTP_MSG(request->socket, buf,
-                      "%lx\r\n<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
-                      34 + strlen(href_link) + strlen(name), href_link, name);
+        // create and add cache to cache_list
+        struct cache_content *content =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        if (!content) {
+            pr_err("can't allocate memory!\n");
+            return false;
+        }
+
+        snprintf(content->buf, SEND_BUFFER_SIZE,
+                 "%lx\r\n<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
+                 34 + strlen(href_link) + strlen(name), href_link, name);
+        add_to_list_tail(&content->cache, request->cache_list);
+        // INIT_LIST_HEAD(&content->cache);
+        // list_add_tail(&content->cache, request->cache_list);
     }
     return true;
 }
@@ -191,36 +209,85 @@ static bool handle_directory(struct http_request *request, int keep_alive)
         return false;
     }
 
+    // check cache
+    struct list_head *head = NULL;
+    if (hash_check(request->request_url, &head)) {
+        struct cache_content *now_content;
+        list_for_each_entry (now_content, head, cache) {
+            http_server_send(request->socket, now_content->buf,
+                             strlen(now_content->buf));
+        }
+        filp_close(fp, NULL);
+        return true;
+    }
+
     // 判斷為目錄
     if (S_ISDIR(fp->f_inode->i_mode)) {
-        // Send HTTP header
-        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s", "HTTP/1.1 200 OK\r\n",
-                      "Connection: Keep-Alive\r\n",
-                      "Content-Type: text/html\r\n",
-                      "Transfer-Encoding: chunked\r\n\r\n");
-
-        // Send HTML header
-        SEND_HTTP_MSG(
-            request->socket, buf, "7B\r\n%s%s%s%s", "<html><head><style>\r\n",
-            "body{font-family: monospace; font-size: 15px;}\r\n",
-            "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
-
-        // Add .. link
-        if (strcmp(request->request_url, "/")) {
-            SEND_HTTP_MSG(
-                request->socket, buf,
-                "%lx\r\n<tr><td><a href=\"%s%s\">..</a></td></tr>\r\n",
-                36 + strlen(request->request_url) + 4, request->request_url,
-                "/../");
+        // init cache_list
+        head = NULL;
+        head = kmalloc(sizeof(struct list_head), GFP_KERNEL);
+        if (!head) {
+            pr_err("can't allocate memory!\n");
+            filp_close(fp, NULL);
+            return false;
         }
+        INIT_LIST_HEAD(head);
+        request->cache_list = head;
 
-        // scan directory and send to client
+        // add HTTP header to cache
+        struct cache_content *content_header =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        snprintf(content_header->buf, SEND_BUFFER_SIZE, "%s%s%s%s",
+                 "HTTP/1.1 200 OK\r\n", "Connection: Keep-Alive\r\n",
+                 "Content-Type: text/html\r\n",
+                 "Transfer-Encoding: chunked\r\n\r\n");
+        add_to_list_tail(&content_header->cache, request->cache_list);
+
+        // add HTML header to cache
+        struct cache_content *content_html_head =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        snprintf(content_html_head->buf, SEND_BUFFER_SIZE, "7B\r\n%s%s%s%s",
+                 "<html><head><style>\r\n",
+                 "body{font-family: monospace; font-size: 15px;}\r\n",
+                 "td {padding: 1.5px 6px;}\r\n",
+                 "</style></head><body><table>\r\n");
+        add_to_list_tail(&content_html_head->cache, request->cache_list);
+
+        // add .. link to cache
+        struct cache_content *content_dot =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        snprintf(content_dot->buf, SEND_BUFFER_SIZE,
+                 "%lx\r\n<tr><td><a href=\"%s%s\">..</a></td></tr>\r\n",
+                 36 + strlen(request->request_url) + 4, request->request_url,
+                 "/../");
+        add_to_list_tail(&content_dot->cache, request->cache_list);
+
+        // scan directory and add content to cache
         iterate_dir(fp, &request->dir_context);
 
-        // Send HTML footer
-        SEND_HTTP_MSG(request->socket, buf, "%s",
-                      "16\r\n</table></body></html>\r\n");
-        SEND_HTTP_MSG(request->socket, buf, "%s", "0\r\n\r\n\r\n");
+        // add HTML footer to cache
+        struct cache_content *content_html_footer =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        snprintf(content_html_footer->buf, SEND_BUFFER_SIZE, "%s",
+                 "16\r\n</table></body></html>\r\n");
+        add_to_list_tail(&content_html_footer->cache, request->cache_list);
+
+        // add end to cache
+        struct cache_content *content_end =
+            kmalloc(sizeof(struct cache_content), GFP_KERNEL);
+        snprintf(content_end->buf, SEND_BUFFER_SIZE, "%s", "0\r\n\r\n\r\n");
+        add_to_list_tail(&content_end->cache, request->cache_list);
+
+        // add node to hash table
+        hash_insert(request->request_url, request->cache_list);
+
+        // loop through cache_list and send content to client
+        struct cache_content *now_content;
+        list_for_each_entry (now_content, head, cache) {
+            // pr_info("now_content->buf: %s\n", now_content->buf);
+            http_server_send(request->socket, now_content->buf,
+                             strlen(now_content->buf));
+        }
     }
     // 判斷為檔案
     else if (S_ISREG(fp->f_inode->i_mode)) {
@@ -240,7 +307,6 @@ static bool handle_directory(struct http_request *request, int keep_alive)
         http_server_send(request->socket, read_data_buf, ret);
         kfree(read_data_buf);
     }
-
     filp_close(fp, NULL);
     return true;
 }
@@ -313,7 +379,6 @@ static struct work_struct *create_work(struct socket *sk)
     // 建立 work - http_server_worker function
     INIT_WORK(&work->khttpd_work, http_server_worker);
     list_add(&work->node, &daemon.worker);  // Add work to worker list
-
     return &work->khttpd_work;
 }
 
@@ -344,6 +409,7 @@ int http_server_daemon(void *arg)
         return -ENOMEM;
     }
     INIT_LIST_HEAD(&daemon.worker);  // Initialize list head
+    init_hash_table();               // Initialize hash table
 
     // 登記要接收的 signal
     allow_signal(SIGKILL);
@@ -379,6 +445,7 @@ int http_server_daemon(void *arg)
     }
 
     daemon.is_stopped = true;
+    hash_table_free();
 
     // free work and destroy workqueue
     free_work();

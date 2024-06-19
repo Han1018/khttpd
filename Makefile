@@ -8,6 +8,7 @@ khttpd-objs := \
 	http_parser.o \
 	http_server.o \
 	timer.o \
+	hash_content.o \
 	main.o
 
 GIT_HOOKS := .git/hooks/applied
