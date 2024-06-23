@@ -14,6 +14,7 @@
 #define SEND_BUFFER_SIZE 256
 #define BUFFER_SIZE 256
 #define BUCKET_SIZE 10
+#define MAX_KVEC 128  // 假設鏈結串列不會超過 128 個緩衝區
 
 #define MODULE_NAME "khttpd"
 
@@ -57,6 +58,35 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
         }
         done += length;
     }
+    return done;
+}
+
+// 使用 scatter-gather I/O 的 http_server_send 函數
+static int http_server_send2(struct socket *sock, struct kvec *vec, int vlen)
+{
+    struct msghdr msg = {.msg_name = NULL,
+                         .msg_namelen = 0,
+                         .msg_control = NULL,
+                         .msg_controllen = 0,
+                         .msg_flags = 0};
+    int done = 0;
+    size_t size = 0;
+    int i;
+
+    // 計算總大小
+    for (i = 0; i < vlen; i++) {
+        size += vec[i].iov_len;
+    }
+
+    while (done < size) {
+        int length = kernel_sendmsg(sock, &msg, vec, vlen, size - done);
+        if (length < 0) {
+            pr_err("write error: %d\n", length);
+            break;
+        }
+        done += length;
+    }
+
     return done;
 }
 
@@ -140,6 +170,28 @@ static void add_to_list_tail(struct list_head *new_node, struct list_head *head)
     list_add_tail(new_node, head);
 }
 
+void send_all_buffers(struct socket *sock, struct list_head *head)
+{
+    struct cache_content *now_content;
+    struct kvec vec[MAX_KVEC];
+    int vlen = 0;
+
+    list_for_each_entry (now_content, head, cache) {
+        if (vlen >= MAX_KVEC) {
+            pr_err("Too many buffers to send in one go\n");
+            break;
+        }
+        vec[vlen].iov_base = now_content->buf;
+        vec[vlen].iov_len = strlen(now_content->buf);
+        vlen++;
+    }
+
+    // 使用 http_server_send 一次性傳送所有緩衝區
+    if (vlen > 0) {
+        http_server_send2(sock, vec, vlen);
+    }
+}
+
 // callback for 'iterate_dir', trace entry.
 static _Bool tracedir(struct dir_context *dir_context,
                       const char *name,
@@ -176,8 +228,6 @@ static _Bool tracedir(struct dir_context *dir_context,
                  "%lx\r\n<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
                  34 + strlen(href_link) + strlen(name), href_link, name);
         add_to_list_tail(&content->cache, request->cache_list);
-        // INIT_LIST_HEAD(&content->cache);
-        // list_add_tail(&content->cache, request->cache_list);
     }
     return true;
 }
@@ -212,11 +262,7 @@ static bool handle_directory(struct http_request *request, int keep_alive)
     // check cache
     struct list_head *head = NULL;
     if (hash_check(request->request_url, &head)) {
-        struct cache_content *now_content;
-        list_for_each_entry (now_content, head, cache) {
-            http_server_send(request->socket, now_content->buf,
-                             strlen(now_content->buf));
-        }
+        send_all_buffers(request->socket, head);
         filp_close(fp, NULL);
         return true;
     }
@@ -282,12 +328,7 @@ static bool handle_directory(struct http_request *request, int keep_alive)
         hash_insert(request->request_url, request->cache_list);
 
         // loop through cache_list and send content to client
-        struct cache_content *now_content;
-        list_for_each_entry (now_content, head, cache) {
-            // pr_info("now_content->buf: %s\n", now_content->buf);
-            http_server_send(request->socket, now_content->buf,
-                             strlen(now_content->buf));
-        }
+        send_all_buffers(request->socket, head);
     }
     // 判斷為檔案
     else if (S_ISREG(fp->f_inode->i_mode)) {
@@ -302,7 +343,6 @@ static bool handle_directory(struct http_request *request, int keep_alive)
                       "Content-Type: ", get_mime_str(request->request_url),
                       "\r\nContent-Length: ", ret,
                       "\r\nConnection: ", connection, "\r\n\r\n");
-
         // Send file content
         http_server_send(request->socket, read_data_buf, ret);
         kfree(read_data_buf);
@@ -428,8 +468,14 @@ int http_server_daemon(void *arg)
             // 檢查此 thread 是否有 signal 發生
             if (signal_pending(current))
                 break;
-            // pr_err("kernel_accept() error: %d\n", err);
-            continue;
+
+            // non-blocking socket, EAGAIN 表示沒有連線
+            if (err == -EAGAIN) {
+                continue;
+            } else {
+                pr_err("kernel_accept() error: %d\n", err);
+                break;
+            }
         }
 
         // create work
