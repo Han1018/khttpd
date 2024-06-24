@@ -91,8 +91,22 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
     atomic_set(&ptr->nalloc, nalloc);
     prio_queue_sink(ptr, 1);
 
-    if (node->callback)
-        node->callback(node->socket, SHUT_RDWR);
+    pr_info("Deleting timer for key %s\n",
+            ((struct hash_content *) node->object)->request);
+    pr_info("Deleting timer\n");
+    if (node->callback) {
+        pr_info("Callback for key %s\n",
+                ((struct hash_content *) node->object)->request);
+        pr_info("nalloc: %ld\n", nalloc);
+
+        int ret = node->callback(node->object);
+
+        if (ret <= 0) {
+            pr_err("Failed to remove key from hash table\n");
+            return false;
+        }
+        // node->callback(node->socket, SHUT_RDWR);
+    }
 
     kfree(node);
     return true;
@@ -187,7 +201,10 @@ void handle_expired_timers(void)
     }
 }
 
-bool http_add_timer(struct http_request *req, size_t timeout, timer_callback cb)
+bool http_add_timer(void *object,
+                    size_t timeout,
+                    timer_callback cb,
+                    bool is_socket)
 {
     timer_node_t *node = kmalloc(sizeof(timer_node_t), GFP_KERNEL);
 
@@ -195,13 +212,23 @@ bool http_add_timer(struct http_request *req, size_t timeout, timer_callback cb)
         return false;
 
     current_time_update();
-    req->timer_node = node;
     node->key = atomic_read(&current_msec) + timeout;
     node->pos = atomic_read(&timer.nalloc) + 1;
     node->callback = cb;
-    node->socket = req->socket;
-
+    node->object = object;
+    pr_info("Adding timer\n");
+    if (is_socket == false) {
+        struct hash_content *content = (struct hash_content *) object;
+        content->timer_node = node;
+        pr_info("Add timer for key %s\n", content->request);
+    } else {
+        struct http_request *req = (struct http_request *) object;
+        req->timer_node = node;
+        pr_info("Add timer for socket\n");
+    }
+    pr_info("key: %ld add to queue\n", node->key);
     prio_queue_insert(&timer, node);
+    pr_info("key: %ld ok\n", node->key);
     return true;
 }
 

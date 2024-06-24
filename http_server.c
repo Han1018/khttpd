@@ -93,6 +93,10 @@ static int http_server_send2(struct socket *sock, struct kvec *vec, int vlen)
 static int http_server_response(struct http_request *request, int keep_alive)
 {
     int ret = 0;
+    if (request->socket == NULL) {
+        pr_err("socket is null in http_server_response\n");
+        return -1;
+    }
     ret = handle_directory(request, keep_alive);
     if (ret == 0) {
         pr_err("handle_directory failed\n");
@@ -150,6 +154,11 @@ static int http_parser_callback_body(http_parser *parser,
 static int http_parser_callback_message_complete(http_parser *parser)
 {
     struct http_request *request = parser->data;
+    if (request->socket) {
+        pr_info("socket is ok in http_parser_callback_message_complete\n");
+    } else {
+        pr_err("socket is null in http_parser_callback_message_complete\n");
+    }
     http_server_response(request, http_should_keep_alive(parser));
     request->complete = 1;
     return 0;
@@ -382,7 +391,7 @@ static void http_server_worker(struct work_struct *work)
     parser.data = &http_work->socket;
 
     // add a timer to worker
-    http_add_timer(http_work, TIMEOUT_DEFAULT, kernel_sock_shutdown);
+    // http_add_timer(http_work, TIMEOUT_DEFAULT, kernel_sock_shutdown);
 
     while (!daemon.is_stopped) {
         int ret =
@@ -399,7 +408,7 @@ static void http_server_worker(struct work_struct *work)
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
 
-        http_timer_update(http_work->timer_node, TIMEOUT_DEFAULT);
+        // http_timer_update(http_work->timer_node, TIMEOUT_DEFAULT);
     }
     kernel_sock_shutdown(http_work->socket, SHUT_RDWR);
     kfree(buf);
