@@ -91,12 +91,7 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
     atomic_set(&ptr->nalloc, nalloc);
     prio_queue_sink(ptr, 1);
 
-    pr_info("Deleting timer for key %s\n",
-            ((struct hash_content *) node->object)->request);
-    pr_info("Deleting timer\n");
     if (node->callback) {
-        pr_info("Callback for key %s\n",
-                ((struct hash_content *) node->object)->request);
         pr_info("nalloc: %ld\n", nalloc);
 
         int ret = node->callback(node->object);
@@ -105,7 +100,6 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
             pr_err("Failed to remove key from hash table\n");
             return false;
         }
-        // node->callback(node->socket, SHUT_RDWR);
     }
 
     kfree(node);
@@ -216,19 +210,16 @@ bool http_add_timer(void *object,
     node->pos = atomic_read(&timer.nalloc) + 1;
     node->callback = cb;
     node->object = object;
-    pr_info("Adding timer\n");
     if (is_socket == false) {
         struct hash_content *content = (struct hash_content *) object;
         content->timer_node = node;
-        pr_info("Add timer for key %s\n", content->request);
+        pr_info("Added timer for key %s\n", content->request);
     } else {
         struct http_request *req = (struct http_request *) object;
         req->timer_node = node;
-        pr_info("Add timer for socket\n");
+        pr_info("Added timer for socket\n");
     }
-    pr_info("key: %ld add to queue\n", node->key);
     prio_queue_insert(&timer, node);
-    pr_info("key: %ld ok\n", node->key);
     return true;
 }
 

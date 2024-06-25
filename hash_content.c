@@ -11,26 +11,28 @@ void init_hash_table(void)
     spin_lock_init(&hash_lock);
 }
 
-void hash_insert(const char *request, struct list_head *head)
+void hash_insert(const char *request_url, struct list_head *head)
 {
     // cal hash key
-    u32 original_key = jhash(request, strlen(request), 0);
+    u32 original_key = jhash(request_url, strlen(request_url), 0);
     u8 key = (u8) (original_key % 256);
 
     // init hash_content
     struct hash_content *content =
         kmalloc(sizeof(struct hash_content), GFP_KERNEL);
     content->head = head;
-    content->request = kmalloc(strlen(request) + 1, GFP_KERNEL);
-    memcpy(content->request, request, strlen(request) + 1);
+    content->request = kmalloc(strlen(request_url) + 1, GFP_KERNEL);
+    memcpy(content->request, request_url, strlen(request_url) + 1);
 
     // add hash_content to the hash_table
     spin_lock(&hash_lock);
-    struct hash_content *now;
+    struct hash_content *now = NULL;
     hash_for_each_possible_rcu(ht, now, node, key)
-    {  // 略過已經存在的 key
-        if (strcmp(now->request, request) == 0) {
-            pr_info("Key %s already exists in hash table\n", request);
+    {
+        // 略過已經存在的 key
+        char *now_request_url = now->request;
+        if (strcmp(now_request_url, request_url) == 0) {
+            pr_info("Key %s already exists in hash table\n", request_url);
             spin_unlock(&hash_lock);
             kfree(content->request);
             kfree(content);
@@ -44,9 +46,9 @@ void hash_insert(const char *request, struct list_head *head)
     int ret = http_add_timer(content, CACHE_TIME_OUT, remove_key_from_hashtable,
                              false);
     if (ret <= 0) {
-        pr_err("Failed to add timer for key %s\n", request);
+        pr_err("Failed to add timer for key %s\n", request_url);
     }
-    pr_info("Add key %s to hash table\n", request);
+    pr_info("Add key %s to hash table\n", request_url);
 }
 
 bool hash_check(const char *request, struct list_head **head)
@@ -82,7 +84,7 @@ int remove_key_from_hashtable(void *hash_cnt)
 
     pr_info("Prepare to remove key %s from hash table\n", request_url);
 
-    struct hash_content *now;
+    struct hash_content *now = NULL;
     struct cache_content *cache_entry, *tmp;
 
     u32 original_key = jhash(request_url, strlen(request_url), 0);
@@ -90,7 +92,8 @@ int remove_key_from_hashtable(void *hash_cnt)
 
     hash_for_each_possible_rcu(ht, now, node, key)
     {
-        if (strcmp(request_url, now->request) == 0) {
+        char *now_request_url = now->request;
+        if (strcmp(request_url, now_request_url) == 0) {
             pr_info("Removing key %s from hash table\n", request_url);
 
             // 刪除 hash_content from hash table

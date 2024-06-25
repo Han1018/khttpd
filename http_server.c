@@ -93,7 +93,7 @@ static int http_server_send2(struct socket *sock, struct kvec *vec, int vlen)
 static int http_server_response(struct http_request *request, int keep_alive)
 {
     int ret = 0;
-    if (request->socket == NULL) {
+    if (!request->socket) {
         pr_err("socket is null in http_server_response\n");
         return -1;
     }
@@ -154,11 +154,6 @@ static int http_parser_callback_body(http_parser *parser,
 static int http_parser_callback_message_complete(http_parser *parser)
 {
     struct http_request *request = parser->data;
-    if (request->socket) {
-        pr_info("socket is ok in http_parser_callback_message_complete\n");
-    } else {
-        pr_err("socket is null in http_parser_callback_message_complete\n");
-    }
     http_server_response(request, http_should_keep_alive(parser));
     request->complete = 1;
     return 0;
@@ -177,6 +172,16 @@ static void add_to_list_tail(struct list_head *new_node, struct list_head *head)
 {
     INIT_LIST_HEAD(new_node);
     list_add_tail(new_node, head);
+}
+
+int shutdown_socket(void *http_req)
+{
+    struct http_request *request = (struct http_request *) http_req;
+    struct socket *socket = request->socket;
+    kernel_sock_shutdown(socket, SHUT_RDWR);
+    request->complete = 1;
+    pr_info("socket has shutdown\n");
+    return 1;
 }
 
 void send_all_buffers(struct socket *sock, struct list_head *head)
@@ -391,7 +396,7 @@ static void http_server_worker(struct work_struct *work)
     parser.data = &http_work->socket;
 
     // add a timer to worker
-    // http_add_timer(http_work, TIMEOUT_DEFAULT, kernel_sock_shutdown);
+    http_add_timer(http_work, TIMEOUT_DEFAULT, shutdown_socket, true);
 
     while (!daemon.is_stopped) {
         int ret =
