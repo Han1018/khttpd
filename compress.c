@@ -6,7 +6,6 @@ bool compress(const char *input,
               unsigned int *output_len)
 {
     struct crypto_comp *comp;
-    struct comp_request *req;
 
     comp = crypto_alloc_comp(COMPRESS_ALGORITHM, 0, 0);
     if (IS_ERR(comp)) {

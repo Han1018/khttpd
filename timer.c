@@ -10,6 +10,7 @@ typedef struct {
     atomic_t nalloc;  // number of items in queue
     atomic_t size;
     prio_queue_comparator comp;
+    spinlock_t lock;
 } prio_queue_t;
 
 static bool prio_queue_init(prio_queue_t *ptr,
@@ -25,6 +26,7 @@ static bool prio_queue_init(prio_queue_t *ptr,
     atomic_set(&ptr->nalloc, 0);
     atomic_set(&ptr->size, size + 1);
     ptr->comp = comp;
+    spin_lock_init(&ptr->lock);  // 初始化 spinlock
     return true;
 }
 
@@ -101,6 +103,7 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
             return false;
         }
     }
+    pr_info("Removed key from hash table\n");
 
     kfree(node);
     return true;
@@ -219,7 +222,12 @@ bool http_add_timer(void *object,
         req->timer_node = node;
         pr_info("Added timer for socket\n");
     }
+
+
+    // 加入 spinlock 保護
+    spin_lock(&timer.lock);
     prio_queue_insert(&timer, node);
+    spin_unlock(&timer.lock);
     return true;
 }
 
@@ -228,14 +236,21 @@ void http_timer_update(timer_node_t *node, size_t timeout)
     current_time_update();
     node->key = atomic_read(&current_msec) + timeout;
     // update new position
+
+    spin_lock(&timer.lock);
     node->pos = prio_queue_sink(&timer, node->pos);
+    spin_unlock(&timer.lock);
 }
 
 void http_free_timer(void)
 {
     int i;
     size_t nalloc = atomic_read(&timer.nalloc);
+
+    spin_lock(&timer.lock);
     for (i = 1; i < nalloc + 1; i++)
         kfree(timer.priv[i]);
+    spin_unlock(&timer.lock);
+
     prio_queue_free(&timer);
 }
