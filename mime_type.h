@@ -89,20 +89,20 @@ mime_map mime_types[] = {
     {NULL, NULL},
 };
 
-// return mime type string
-const char *get_mime_str(char *request_url)
-{
-    char *request_type = strchr(request_url, '.');
-    int index = 0;
-    if (!request_type)
-        return "text/plain";
+// // return mime type string
+// const char *get_mime_str(char *request_url)
+// {
+//     char *request_type = strchr(request_url, '.');
+//     int index = 0;
+//     if (!request_type)
+//         return "text/plain";
 
-    while (mime_types[index].type) {
-        if (!strcmp(mime_types[index].type, request_type))
-            return mime_types[index].string;
-        index++;
-    }
-    return "text/plain";
-}
+//     while (mime_types[index].type) {
+//         if (!strcmp(mime_types[index].type, request_type))
+//             return mime_types[index].string;
+//         index++;
+//     }
+//     return "text/plain";
+// }
 
 #endif

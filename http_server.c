@@ -180,7 +180,6 @@ int shutdown_socket(void *http_req)
     struct socket *socket = request->socket;
     kernel_sock_shutdown(socket, SHUT_RDWR);
     request->complete = 1;
-    pr_info("socket has shutdown\n");
     return 1;
 }
 
@@ -349,17 +348,34 @@ static bool handle_directory(struct http_request *request, int keep_alive)
         char *read_data_buf = kmalloc(fp->f_inode->i_size, GFP_KERNEL);
 
         // 讀檔案內容
-        int ret = kernel_read(fp, read_data_buf, fp->f_inode->i_size, 0);
+        int file_size = kernel_read(fp, read_data_buf, fp->f_inode->i_size, 0);
+
+        char *tmp_buf = kmalloc(fp->f_inode->i_size, GFP_KERNEL);
+        unsigned int tmp_buf_size = fp->f_inode->i_size;
+
+        // compress file content
+        if (!compress(read_data_buf, file_size, tmp_buf, &tmp_buf_size)) {
+            pr_err("compress_data failed\n");
+            kfree(tmp_buf);
+            kfree(read_data_buf);
+            filp_close(fp, NULL);
+            return false;
+        }
 
         // Send HTTP header
-        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%d%s%s%s",
-                      "HTTP/1.1 200 OK\r\n",
-                      "Content-Type: ", get_mime_str(request->request_url),
-                      "\r\nContent-Length: ", ret,
+        SEND_HTTP_MSG(request->socket, buf, "%s%s%s%s%u%s%s%s",
+                      "HTTP/1.1 200 OK\r\n", "Content-Encoding: deflate\r\n",
+                      "Content-Type: text/plain\r\n",
+                      "Content-Length: ", tmp_buf_size,
                       "\r\nConnection: ", connection, "\r\n\r\n");
+
         // Send file content
-        http_server_send(request->socket, read_data_buf, ret);
+        http_server_send(request->socket, tmp_buf, tmp_buf_size);
         kfree(read_data_buf);
+        kfree(tmp_buf);
+
+        pr_info("compress success, before : %ld, after : %ld\n", file_size,
+                tmp_buf_size);
     }
     filp_close(fp, NULL);
     return true;

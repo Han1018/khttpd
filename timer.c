@@ -92,7 +92,7 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
     prio_queue_sink(ptr, 1);
 
     if (node->callback) {
-        pr_info("nalloc: %ld\n", nalloc);
+        // pr_info("nalloc: %ld\n", nalloc);
 
         int ret = node->callback(node->object);
 

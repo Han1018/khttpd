@@ -3,6 +3,7 @@
 
 #include <linux/workqueue.h>
 #include <net/sock.h>
+#include "compress.h"
 #include "http_parser.h"
 
 #define SEND_BUFFER_SIZE 256
