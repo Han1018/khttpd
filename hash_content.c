@@ -32,7 +32,6 @@ void hash_insert(const char *request_url, struct list_head *head)
         // 略過已經存在的 key
         char *now_request_url = now->request;
         if (strcmp(now_request_url, request_url) == 0) {
-            pr_info("Key %s already exists in hash table\n", request_url);
             spin_unlock(&hash_lock);
             kfree(content->request);
             kfree(content);
@@ -61,9 +60,7 @@ bool hash_check(const char *request, struct list_head **head)
     {
         if (strcmp(request, now->request) == 0) {
             *head = now->head;
-            pr_info("Found key %s in hash table\n", request);
-            // http_timer_update(now->timer_node, CACHE_TIME_OUT);
-            pr_info("Update timer for key %s\n", request);
+            http_timer_update(now->timer_node, CACHE_TIME_OUT);
             rcu_read_unlock();
             return true;
         }
@@ -94,7 +91,7 @@ int remove_key_from_hashtable(void *hash_cnt)
     {
         char *now_request_url = now->request;
         if (strcmp(request_url, now_request_url) == 0) {
-            pr_info("Removing key %s from hash table\n", request_url);
+            pr_info("Remove key %s from hash table\n", request_url);
 
             // 刪除 hash_content from hash table
             spin_lock(&hash_lock);

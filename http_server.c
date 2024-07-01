@@ -429,7 +429,7 @@ static void http_server_worker(struct work_struct *work)
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
 
-        // http_timer_update(http_work->timer_node, TIMEOUT_DEFAULT);
+        http_timer_update(http_work->timer_node, TIMEOUT_DEFAULT);
     }
     kernel_sock_shutdown(http_work->socket, SHUT_RDWR);
     kfree(buf);

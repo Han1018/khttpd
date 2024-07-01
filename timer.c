@@ -103,7 +103,6 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
             return false;
         }
     }
-    pr_info("Removed key from hash table\n");
 
     kfree(node);
     return true;
@@ -220,7 +219,6 @@ bool http_add_timer(void *object,
     } else {
         struct http_request *req = (struct http_request *) object;
         req->timer_node = node;
-        pr_info("Added timer for socket\n");
     }
 
 
